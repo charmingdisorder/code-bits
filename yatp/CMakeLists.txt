@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 2.6)
+project(yatp)
+find_package (Threads)
+add_definitions(-Wall -pedantic -DDEBUG -g)
+add_executable(yatp yatp.c)
+target_link_libraries (yatp ${CMAKE_THREAD_LIBS_INIT})

@@ -1,0 +1,140 @@
+/**
+ * find_minimum.c: Find local minimum in given array, perform some
+ * extremely simple benchmarks
+ *
+ * Copyright (c) 2019 Alexey Mikhailov. All rights reserved.
+ *
+ * This work is licensed under the terms of the MIT license.
+ * For a copy, see <https://opensource.org/licenses/MIT>.
+ */
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+/**
+ * find_minimum: find local minimum in given array (binary search)
+ *
+ * XXX: elements are guaranteed to be distinct (or can't be done in O(log n))
+ *
+ */
+
+int find_minimum (unsigned int *a, size_t s, unsigned int *n_iter)
+{
+        size_t from = 0;
+        size_t to = s-1;
+
+        if (n_iter)
+                *n_iter = 0;
+
+        while (1) {
+                size_t m = (from + to) / 2;
+
+                if (n_iter)
+                        (*n_iter)++;
+
+                if (m == 0 || m == s-1) {
+                        /* boundary conditions */
+                        return a[m];
+                } else if (a[m] < a[m-1] && a[m] < a[m+1]) {
+                        /* current element is local minimum */
+                        return a[m];
+                } else if (a[m] > a[m-1]) {
+                        /* current element is greater than left element
+                         * shrink to left partition" */
+                        to = m;
+                } else {
+                        /* shrink to right partition otherwise */
+                        from = m+1;
+                }
+        }
+}
+
+/**
+ * shuffle_array: shuffles array
+ */
+
+void shuffle_array (unsigned int *a, size_t s)
+{
+        for (int i = s-1; i > 0; i--) {
+                int r = rand() % i;
+                int t = a[i];
+                a[i] = a[r];
+                a[r] = t;
+        }
+}
+
+#ifdef BENCH
+#define N_STEPS 200
+#define N_DIFF (100*1000)
+#define N_SWAPS 100
+#define N_RUNS 15
+#endif
+
+int main (int argc, char **argv)
+{
+        unsigned int data [] = {5, 6, 1, 2, 3, 4};
+
+        assert(find_minimum(data, 6, NULL) == 1);
+
+#ifdef BENCH
+        /* poor man's benchmark */
+        size_t sz = N_STEPS*N_DIFF*sizeof(unsigned int);
+        unsigned int *m = malloc (sz);
+        unsigned int i, j, k;
+
+        if (m == NULL) {
+                fprintf(stderr, "malloc() failed\n");
+                exit(EXIT_FAILURE);
+        }
+
+
+        fprintf(stdout, "# N_STEPS = %u N_DIFF = %u, N_RUNS = %u\n",
+                N_STEPS, N_DIFF, N_RUNS);
+
+        fprintf(stdout, "#\n# N TIME\n");
+
+        fprintf(stdout, "set title \"find\\\\_minimum() perf\"\n");
+        fprintf(stdout, "set xlabel \"size\"\n");
+        fprintf(stdout, "set ylabel \"time\"\n");
+        fprintf(stdout, "set grid\n");
+        fprintf(stdout, "plot \"-\" u 1:2 smooth bezier \n");
+
+        for (i = 1; i <= N_STEPS; i++) {
+                unsigned int res[N_RUNS];
+                unsigned total = 0;
+                float avg;
+
+
+                for (j = 0; j < N_DIFF * i; j++) {
+                        m[j] = j;
+                }
+
+                for (j = 0; j < N_RUNS; j++) {
+                        for (k = 0; k < N_SWAPS; k++) {
+                                unsigned int f = rand() % (N_DIFF * i);
+                                unsigned int s = rand() % (N_DIFF * i);
+                                unsigned int t;
+
+                                t = m[f];
+                                m[f] = m[s];
+                                m[s] = t;
+                        }
+
+                        find_minimum (m, N_DIFF * i, &res[j]);
+                        total += res[j];
+                }
+
+                avg = total/N_RUNS;
+
+                fprintf(stdout, "%u %f\n", N_DIFF * i, avg);
+                fflush(stdout);
+        }
+
+        fprintf(stdout, "e\n");
+        fprintf(stdout, "pause -1\n");
+#endif
+
+        return 0;
+}
