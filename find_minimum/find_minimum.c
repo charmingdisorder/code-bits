@@ -28,11 +28,22 @@ int find_minimum (unsigned int *a, size_t s, unsigned int *n_iter)
         if (n_iter)
                 *n_iter = 0;
 
+        if (s == 0)
+                return -1;
+
         while (1) {
                 size_t m = (from + to) / 2;
 
                 if (n_iter)
                         (*n_iter)++;
+
+                if (m == from) {
+                        return a[m];
+                }
+
+                if (to - from == 1) {
+                        return ((a[to] < a[from]) ? a[to] : a[from]);
+                }
 
                 if (m == 0 || m == s-1) {
                         /* boundary conditions */
