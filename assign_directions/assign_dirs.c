@@ -3,25 +3,25 @@
  *
  * Run as "./assign_dirs FILE"
  *
- * FILE consists of lines. Each line defines either directed or undirected
- * edge for input graph. Directed edges are defined as "D VERTEX1 VERTEX2", same
- * way undirected egdges are fined as "U VERTEX1 VERTEX2"
+ * FILE consists of lines. First line specifies size of adjacency matrix
+ * (number of vertices). Adjacency matrix elements follows. Set of undirected
+ * edges follows. (see example in 'test.input')
  *
- * Output specifies resulting graph as set of directed edges (adjacency matrix)
+ * Output specifies resulting graph as adjacency matrix.
  *
  * Example:
  *
- * $ ./assign_dirs test1.input
+ * $ ./assign_dirs test.input
  *   ...
- * 0 => 2
- * 0 => 3
- * 5 => 4
- * 0 1 0 0 0 1
- * 0 0 1 1 1 0
+ * 1 => 4
+ * 1 => 3
+ * 6 => 5
+ * 0 1 1 1 0 1
+ * 0 0 1 0 1 0
  * 0 0 0 1 1 0
  * 0 0 0 0 1 0
  * 0 0 0 0 0 0
- * 0 0 1 0 0 0
+ * 0 1 1 0 1 0
  *
  * Copyright (c) 2019 Alexey Mikhailov. All rights reserved.
  *
@@ -37,7 +37,6 @@
 #include <string.h>
 #include <strings.h>
 
-#define N_VERTEX 50
 #define PROG "assign_dirs"
 
 typedef int bool;
@@ -46,20 +45,26 @@ typedef int bool;
  * topological_sort: given adjancency matrix, perform topological sorting
  */
 
-void topological_sort (bool *adj_mat, int n_vert, int *res, int *res_n)
+int topological_sort (bool *adj_mat, int dim, int *res)
 {
-        int in_deg[N_VERTEX] = {0};
-        int queue[N_VERTEX*N_VERTEX];
+        int *in_deg, *queue;
         int n_queue_f = 0;
         int n_queue_l = 0;
-
-        *res_n = 0;
-
         int i = 0, j = 0;
 
-        for (i = 0; i < n_vert; i++) {
-                for (j = 0; j < n_vert; j++) {
-                        in_deg[i] += adj_mat[j + (N_VERTEX * i)];
+        in_deg = malloc(sizeof(int) * dim);
+        queue = malloc(sizeof(int) * dim * dim);
+
+        if (!in_deg || !queue) {
+                fprintf(stderr, "%s: malloc() failed: %s", __func__,
+                        strerror(errno));
+                goto err;
+        }
+
+
+        for (i = 0; i < dim; i++) {
+                for (j = 0; j < dim; j++) {
+                        in_deg[i] += adj_mat[i + (dim * j)];
                 }
 #ifdef DEBUG
                 printf("in_deg[%d] = %d\n", i, in_deg[i]);
@@ -67,22 +72,23 @@ void topological_sort (bool *adj_mat, int n_vert, int *res, int *res_n)
 
         }
 
-        for (i = 0; i < n_vert; i++) {
+        for (i = 0; i < dim; i++) {
                 if (in_deg[i] == 0) {
                         queue[n_queue_l] = i;
                         n_queue_l++;
                 }
         }
 
+        i = 0;
         j = 0;
+
         while (n_queue_f != n_queue_l) {
                 int n = queue[n_queue_f];
                 n_queue_f++;
 
-                res[*res_n] = n;
-                (*res_n)++;
+                res[j] = n;
 
-                for (i = 0; i < n_vert; i++) {
+                for (i = 0; i < dim; i++) {
                         in_deg[i]--;
 
                         if (in_deg[i] == 0) {
@@ -90,128 +96,101 @@ void topological_sort (bool *adj_mat, int n_vert, int *res, int *res_n)
                                 n_queue_l++;
                         }
                 }
+
                 j++;
         }
 
-        if (j != n_vert) {
-                fprintf(stderr, "%s: wrong input? j = %d, n = %d\n", PROG, j, n_vert);
-                //exit(EXIT_FAILURE);
+        if (j != dim) {
+                fprintf(stderr, "%s: wrong input? j = %d, n = %d\n", PROG, j, dim);
+                goto err;
         }
-
-#ifdef DEBUG
-        for (i = 0; i < *res_n; i++) {
-                printf("%d ", res[i]);
-        }
-
-        printf("\n");
-#endif
-}
-
-
-int parse_input (FILE *fin, bool *adj_mat, int *n_vert, int *undir_edges, int *n_uedges)
-{
-        char buf[16];
-        char *r;
-
-        *n_vert = 0;
-        *n_uedges = 0;
-
-        while ((r = fgets(buf, sizeof(buf), fin)) != NULL) {
-                char t;
-                int v1;
-                int v2;
-
-                if (sscanf(r, "%c %d %d", &t, &v1, &v2) != 3) {
-                        fprintf(stderr, "%s: failed to parse string: %s\n",
-                                PROG, buf);
-                        return -1;
-                }
-
-                assert(v1 >= 0 && v1 < N_VERTEX);
-                assert(v2 >= 0 && v2 < N_VERTEX);
-                assert(t == 'D' || t == 'U');
-
-                if (v1 > (*n_vert)-1)
-                        *(n_vert) = v1 + 1;
-
-                if (v2 > (*n_vert)-1)
-                        *(n_vert) = v2 + 1;
-
-                if (t == 'D') {
-                        adj_mat [v1 + (v2 * N_VERTEX)] = 1;
-                } else if (t == 'U') {
-                        undir_edges[*n_uedges] = (v1 | (v2 << 16));
-                        (*n_uedges)++;
-                }
-        }
-
-#ifdef DEBUG
-        for (int i = 0; i < *n_vert; i++) {
-                for (int j = 0; j < *n_vert; j++) {
-                        printf("%d ", adj_mat[i + j*N_VERTEX]);
-                }
-                printf("\n");
-        }
-#endif
 
         return 0;
+
+err:
+        if (in_deg)
+                free(in_deg);
+
+        if (queue)
+                free(queue);
+
+        return -1;
 }
 
-void solve (bool *adj_mat, int *undir_edges, int n_uedges, bool *out, int n_vert)
+
+int parse_input (FILE *fin, bool **adj_mat, int *dim)
 {
-        int i, j;
-        int res[N_VERTEX];
-        int res_n;
+        bool *m, *p;
+        int d, i, v;
 
-        topological_sort (adj_mat, n_vert, res, &res_n);
+        if (fscanf(fin, "%d", &d) != 1) {
+                fprintf(stderr, "%s: fscanf failed()\n", __func__);
+                return -1;
+        }
 
-        memcpy(out, adj_mat, N_VERTEX * N_VERTEX * sizeof(bool));
+        if (d <= 0) {
+                fprintf(stderr, "%s: non-positive dimensions\n", __func__);
+                return -1;
+        }
 
-        for (i = 0; i < n_uedges; i++) {
-                int e = undir_edges[i];
-                int v1 = e & 0xFFFF;
-                int v2 = (e >> 16) & 0xFFFF;
+        m = malloc(d*d*sizeof(bool));
 
-                for (j = 0; j < res_n; j++) {
-                        /* if v1 comes first then v1 => v2 direction, v2 => v1 otherwise */
-                        if (res[j] == v1) {
+        if (m == NULL) {
+                fprintf(stderr, "%s: malloc() failed: %s\n",
+                        __func__, strerror(errno));
+                return -1;
+        }
 
-#ifdef DEBUG
-                                printf("%d => %d\n", v1, v2);
-#endif
-                                out[v1 + N_VERTEX*v2] = 1;
-                                break;
-                        }
+        *dim = d;
+        *adj_mat = m;
+        p = m;
 
-                        if (res[j] == v2) {
-#ifdef DEBUG
-                                printf("%d => %d\n", v2, v1);
-#endif
-                                out[v2 + N_VERTEX*v1] = 1;
-                                break;
-                        }
-
+        for (i = 0; i < d*d; i++) {
+                if (fscanf(fin, "%d", &v) != 1) {
+                        fprintf(stderr, "%s: fscanf failed()\n", __func__);
+                        goto err;
                 }
+
+                if (v != 0 && v != 1) {
+                        fprintf(stderr, "%s: wrong value in adjacency matrix\n",
+                                __func__);
+                        goto err;
+                }
+
+                *p = v;
+                p++;
+        }
+
+        return 0;
+
+err:
+        free(m);
+        return -1;
+}
+
+void print_matrix (bool *adj_mat, int dim)
+{
+        int i,j;
+
+        for (i = 0; i < dim; i++) {
+                for (j = 0; j < dim; j++) {
+                        printf("%d ", adj_mat[j + i*dim]);
+                }
+                printf("\n");
         }
 
 }
 
 int main (int argc, char **argv) {
         FILE *fin;
-        bool adj_mat [N_VERTEX * N_VERTEX];
-        int n_vert = 0;
-
-        int undir_edges [N_VERTEX];
-        int n_uedges;
-
-        bool out[N_VERTEX * N_VERTEX];
+        bool *adj_mat, *p;
+        int *s_edges;
+        int dim, v1, v2, i;
 
         if (argc != 2) {
                 fprintf(stderr, "%s: missing filename\n", PROG);
                 exit(EXIT_FAILURE);
         }
-
-        bzero(adj_mat, sizeof(bool) * N_VERTEX * N_VERTEX);
 
         fin = fopen(argv[1], "r");
 
@@ -221,17 +200,58 @@ int main (int argc, char **argv) {
                 exit(EXIT_FAILURE);
         }
 
-        if (parse_input(fin, adj_mat, &n_vert, undir_edges, &n_uedges) < 0) {
+        if (parse_input(fin, &adj_mat, &dim) < 0) {
                 exit(EXIT_FAILURE);
         }
 
-        solve (adj_mat, undir_edges, n_uedges, out, n_vert);
+        print_matrix (adj_mat, dim);
 
-        for (int i = 0; i < n_vert; i++) {
-                for (int j = 0; j < n_vert; j++) {
-                        printf("%d ", adj_mat[i + j*N_VERTEX]);
-                }
-                printf("\n");
+        s_edges = malloc(dim * sizeof(int));
+
+        if (s_edges == NULL) {
+                fprintf(stderr, "%s: malloc() failed: %s\n",
+                        PROG, strerror(errno));
+                exit(EXIT_FAILURE);
         }
 
+        topological_sort (adj_mat, dim, s_edges);
+
+        while (!feof(fin)) {
+                if (fscanf(fin, "%d %d", &v1, &v2) != 2) {
+                        break;
+                }
+
+                if (v1 < 1 || v2 < 1 || v1 > dim || v2 > dim) {
+                        fprintf(stderr, "%s: wrong edge specification (%d, %d)\n",
+                                __func__, v1, v2);
+                        exit(EXIT_FAILURE);
+                }
+
+                p = s_edges;
+
+                for (i = 0; i < dim; i++) {
+                        if ((v1-1) == *p) {
+
+#ifdef DEBUG
+                                printf("%d => %d\n", v1, v2);
+#endif
+                                adj_mat[(v2-1) + dim*(v1-1)] = 1;
+                                break;
+                        }
+
+                        if ((v2-1) == *p) {
+#ifdef DEBUG
+                                printf("%d => %d\n", v2, v1);
+#endif
+                                adj_mat[(v1-1) + dim*(v2-1)] = 1;
+                                break;
+                        }
+
+                        p++;
+                }
+        }
+
+        print_matrix (adj_mat, dim);
+
+        return 0;
 }
