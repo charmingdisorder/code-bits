@@ -16,44 +16,16 @@
 
 #include <sys/types.h>
 
+#include "yatp.h"
+
 #define PROG "yatp"
 
 #define dprintf(...) \
         do { if (DEBUG) fprintf(stderr, __VA_ARGS__); } while (0)
 
-enum yatp_prio_t {
-        YATP_PRIO_HIGH,
-        YATP_PRIO_NORMAL,
-        YATP_PRIO_LOW,
-        YATP_PRIO_LAST
-};
-
-struct yatp_task_t {
-        void (*f)(void *);
-        void *arg;
-        struct yatp_task_t *next;
-};
-
-struct yatp_queue_t {
-        struct yatp_task_t *first;
-        struct yatp_task_t *last;
-        enum yatp_prio_t prio;
-        unsigned int size;
-        unsigned int in_row;
-};
-
 #define YATP_PRIO_HIGH_THRESHOLD 3
 
-struct yatp_t {
-        unsigned int n_workers;
-        pthread_t *workers;
-        pthread_mutex_t q_mutex;
-        pthread_cond_t q_event;
-        unsigned int is_stopping;
-        struct yatp_queue_t *queue[YATP_PRIO_LAST];
-};
-
-struct yatp_task_t *yatp_get_task (struct yatp_queue_t *q)
+static struct yatp_task_t *yatp_get_task (struct yatp_queue_t *q)
 {
         struct yatp_task_t *t = q->first;
 
@@ -66,11 +38,10 @@ struct yatp_task_t *yatp_get_task (struct yatp_queue_t *q)
                 q->size--;
         }
 
-
         return t;
 }
 
-struct yatp_task_t *yatp_dequeue (struct yatp_t *tp)
+static struct yatp_task_t *yatp_dequeue (struct yatp_t *tp)
 {
         struct yatp_queue_t *hq = tp->queue[YATP_PRIO_HIGH];
         struct yatp_queue_t *nq = tp->queue[YATP_PRIO_NORMAL];
@@ -100,10 +71,11 @@ struct yatp_task_t *yatp_dequeue (struct yatp_t *tp)
                 return yatp_get_task(lq);
         }
 
+        /* no tasks */
         return NULL;
 }
 
-void *yatp_worker (void *t)
+static void *yatp_worker (void *t)
 {
         struct yatp_t *tp = (struct yatp_t *)t;
         struct yatp_task_t *task = NULL;
@@ -180,21 +152,19 @@ int yatp_enqueue (struct yatp_t *tp, void (*f) (void *), void *arg,
 
         if (pthread_mutex_unlock(&tp->q_mutex) != 0) {
                 fprintf(stderr, "yatp_enqueue: pthread_mutex_unlock()\n");
-                return -1;
         }
 
-        return 0;
+        return ret;
 }
 
-struct yatp_t *yatp_init (unsigned int n_workers)
+int yatp_init (struct yatp_t **tpr, unsigned int n_workers)
 {
         /* XXX: cleanup on errors */
         int ret, i;
         struct yatp_t *tp = malloc(sizeof(struct yatp_t));
 
         if (tp == NULL)
-                return NULL;
-
+                return -1;
 
         tp->is_stopping = 0;
         tp->n_workers = n_workers;
@@ -202,56 +172,76 @@ struct yatp_t *yatp_init (unsigned int n_workers)
 
         if (tp->workers == NULL) {
                 fprintf(stderr, "%s: malloc() failed\n", PROG);
-                return NULL;
+                goto err1;
         }
 
         if ((ret = pthread_mutex_init(&(tp->q_mutex), NULL)) != 0) {
                 fprintf(stderr, "%s: pthread_mutex_init() failed with %d\n",
                         PROG, ret);
-                return NULL;
+                goto err2;
         }
 
         if ((ret = pthread_cond_init(&(tp->q_event), NULL)) != 0) {
                 fprintf(stderr, "%s: pthread_cond_init() failed with %d\n",
                         PROG, ret);
-                return NULL;
+                goto err3;
         }
 
         for (i = 0; i < YATP_PRIO_LAST; i++) {
                 struct yatp_queue_t *q;
 
                 q = malloc(sizeof(struct yatp_queue_t));
+                tp->queue[i] = q;
 
                 if (q == NULL) {
                         fprintf(stderr, "%s: malloc() failed\n", PROG);
-                        return NULL;
+                        goto err4;
                 }
 
                 q->prio = i;
                 q->first = NULL;
                 q->last = NULL;
                 q->size = 0;
-
-                tp->queue[i] = q;
         }
 
         for (i = 0; i < tp->n_workers; i++) {
                 if ((ret = pthread_create(&(tp->workers[i]), NULL, yatp_worker,
                                           (void *)tp)) != 0) {
+                        tp->workers[i] = (pthread_t)NULL;
                         fprintf(stderr, "%s: pthread_create() failed with %d\n",
                                 PROG, ret);
-                        return NULL;
+                        goto err4;
                 }
         }
 
-        return tp;
+        *tpr = tp;
+
+        return 0;
+
+err4:
+        for (i = 0; i < YATP_PRIO_LAST; i++) {
+                if (tp->queue[i] != NULL) {
+                        free(tp->queue[i]);
+                } else {
+                        break;
+                }
+        }
+        pthread_cond_destroy(&(tp->q_event));
+err3:
+        pthread_mutex_destroy(&(tp->q_mutex));
+err2:
+        free(tp->workers);
+err1:
+        free(tp);
+
+        return -1;
 }
 
 int yatp_stop (struct yatp_t *tp)
 {
         int i, err = 0;
 
-        dprintf("Shutting down...\n");
+        dprintf("%s: shutting down...\n", __func__);
 
         if (pthread_mutex_lock(&(tp->q_mutex)) != 0) {
                 fprintf(stderr, "yatp_enqueue: pthread_mutex_lock()\n");
@@ -259,14 +249,11 @@ int yatp_stop (struct yatp_t *tp)
         }
 
         tp->is_stopping = 1;
-        dprintf("Shutting down... 2\n");
 
         if (pthread_cond_broadcast(&(tp->q_event)) != 0) {
                 fprintf(stderr, "yatp_stop: thread_cond_broadcast\n");
                 err = 1;
         }
-
-        dprintf("Shutting down... 3\n");
 
         if (pthread_mutex_unlock(&(tp->q_mutex)) != 0) {
                 fprintf(stderr, "yatp_stop: thread_mutex_unlock\n");
@@ -288,77 +275,9 @@ int yatp_stop (struct yatp_t *tp)
                         free(tp->queue[i]);
                 }
 
-
                 pthread_mutex_destroy(&tp->q_mutex);
                 pthread_cond_destroy(&tp->q_event);
         }
 
         return err;
-}
-
-void dumb_task(void *arg) {
-        int t = (size_t) arg;
-        dprintf("Task %d: started, timeout = %d, priority = %d\n",
-                t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF);
-        sleep((t >> 8) & 0xFF);
-        dprintf("Task %d: finished\n", t & 0xFF);
-        return;
-}
-
-int main (int argc, char **argv)
-{
-        struct yatp_t *tp;
-
-        /* simple test case  */
-        tp = yatp_init(4);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(1 | (5 << 8) | (YATP_PRIO_LOW << 16)),
-                     YATP_PRIO_LOW);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(2 | (5 << 8) | (YATP_PRIO_NORMAL << 16)),
-                     YATP_PRIO_NORMAL);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(3 | (5 << 8) | (YATP_PRIO_HIGH << 16)),
-                     YATP_PRIO_HIGH);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(4 | (5 << 8) | (YATP_PRIO_NORMAL << 16)),
-                     YATP_PRIO_NORMAL);
-
-
-        sleep(5);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(11 | (3 << 8) | (YATP_PRIO_HIGH << 16)),
-                     YATP_PRIO_HIGH);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(12 | (3 << 8) | (YATP_PRIO_HIGH << 16)),
-                     YATP_PRIO_HIGH);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(13 | (3 << 8) | (YATP_PRIO_HIGH << 16)),
-                     YATP_PRIO_HIGH);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(14 | (5 << 8) | (YATP_PRIO_HIGH << 16)),
-                     YATP_PRIO_HIGH);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(19 | (3 << 8) | (YATP_PRIO_NORMAL << 16)),
-                     YATP_PRIO_NORMAL);
-
-        sleep(10);
-
-        yatp_enqueue(tp, dumb_task,
-                     (void *)(21 | (20 << 8) | (YATP_PRIO_LOW << 16)),
-                     YATP_PRIO_LOW);
-
-
-        sleep (5);
-
-        return (yatp_stop(tp));
 }
