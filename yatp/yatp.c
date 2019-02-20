@@ -99,6 +99,9 @@ static void *yatp_worker (void *t)
 
                 if (task)
                         (task->f)(task->arg);
+
+                /* XXX: task->arg? */
+                free(task);
         }
 
         return NULL;
@@ -240,6 +243,7 @@ err1:
 int yatp_stop (struct yatp_t *tp)
 {
         int i, err = 0;
+        struct yatp_task_t *task = NULL;
 
         dprintf("%s: shutting down...\n", __func__);
 
@@ -270,6 +274,11 @@ int yatp_stop (struct yatp_t *tp)
         if (!err) {
                 if (tp->workers)
                         free(tp->workers);
+
+                while ((task = yatp_dequeue(tp)) != NULL) {
+                        free(task);
+
+                }
 
                 for (i = 0; i < YATP_PRIO_LAST; i++) {
                         free(tp->queue[i]);
