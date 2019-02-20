@@ -20,7 +20,7 @@
  *
  */
 
-int find_minimum (unsigned int *a, size_t s, unsigned int *n_iter)
+int find_minimum (const unsigned int *a, size_t s, unsigned int *n_iter)
 {
         size_t from = 0;
         size_t to = s-1;
@@ -37,24 +37,16 @@ int find_minimum (unsigned int *a, size_t s, unsigned int *n_iter)
                 if (n_iter)
                         (*n_iter)++;
 
-                if (m == from) {
-                        return a[m];
-                }
-
-                if (to - from == 1) {
+                if (to == from) {
+                        return a[from];
+                } else if ((to - from) == 1) {
                         return ((a[to] < a[from]) ? a[to] : a[from]);
-                }
-
-                if (m == 0 || m == s-1) {
-                        /* boundary conditions */
-                        return a[m];
                 } else if (a[m] < a[m-1] && a[m] < a[m+1]) {
                         /* current element is local minimum */
                         return a[m];
-                } else if (a[m] > a[m-1]) {
-                        /* current element is greater than left element
-                         * shrink to left partition" */
-                        to = m;
+                } else if (a[m-1] < a[m]) {
+                         /* shrink to left partition" */
+                        to = m-1;
                 } else {
                         /* shrink to right partition otherwise */
                         from = m+1;
@@ -85,9 +77,25 @@ void shuffle_array (unsigned int *a, size_t s)
 
 int main (int argc, char **argv)
 {
-        unsigned int data [] = {5, 6, 1, 2, 3, 4};
+        /* simple tests */
 
+        const unsigned int data [] = {6,5,4,3,2,1};
+        assert(find_minimum(data, 0, NULL) == -1);
+        assert(find_minimum(data, 1, NULL) == 6);
+        assert(find_minimum(data, 2, NULL) == 5);
+        assert(find_minimum(data, 3, NULL) == 4);
+        assert(find_minimum(data, 4, NULL) == 3);
+        assert(find_minimum(data, 5, NULL) == 2);
         assert(find_minimum(data, 6, NULL) == 1);
+
+        const unsigned int data1 [] = {6,5,1,2,3,4};
+        assert(find_minimum(data1, 0, NULL) == -1);
+        assert(find_minimum(data1, 1, NULL) == 6);
+        assert(find_minimum(data1, 2, NULL) == 5);
+        assert(find_minimum(data1, 3, NULL) == 1);
+        assert(find_minimum(data1, 4, NULL) == 1);
+        assert(find_minimum(data1, 5, NULL) == 1);
+        assert(find_minimum(data1, 6, NULL) == 1);
 
 #ifdef BENCH
         /* poor man's benchmark */
