@@ -62,6 +62,12 @@ int topological_sort (bool *adj_mat, int dim, int *res)
         int i = 0, j = 0;
 
         for (i = 0; i < dim; i++) {
+                if (adj_mat[i*(dim+1)] == 1) {
+                        fprintf(stderr, "%s: failed to sort, no loops allowed\n",
+                                __func__);
+                        return -1;
+                }
+
                 in_deg[i] = 0;
                 for (j = 0; j < dim; j++) {
                         queue[j+i*dim] = 0;
@@ -104,7 +110,7 @@ int topological_sort (bool *adj_mat, int dim, int *res)
         }
 
         if (j != dim) {
-                fprintf(stderr, "%s: failed to sort, wrong input?\n",
+                fprintf(stderr, "%s: failed to sort, wrong input (DAG required)\n",
                         __func__);
                 return -1;
         }
@@ -118,7 +124,7 @@ bool solve (bool *in, bool *out, size_t d)
         int s_edges[d];
 
         if (topological_sort (in, d, s_edges) < 0) {
-                fprintf(stderr, "%s: topological_sort() failed", __func__);
+                fprintf(stderr, "%s: topological_sort() failed\n", __func__);
                 return FALSE;
         }
 
@@ -179,12 +185,6 @@ int parse_input (FILE *fin, bool **adj_mat, int *dim)
         for (i = 0; i < d*d; i++) {
                 if (fscanf(fin, "%d", &v) != 1) {
                         fprintf(stderr, "%s: fscanf failed()\n", __func__);
-                        goto err;
-                }
-
-                if (v != 0 && v != 1) {
-                        fprintf(stderr, "%s: wrong value in adjacency matrix\n",
-                                __func__);
                         goto err;
                 }
 
