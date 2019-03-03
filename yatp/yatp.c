@@ -53,21 +53,16 @@ static struct yatp_task_t *yatp_dequeue (struct yatp_t *tp)
                         hq->in_row = 0;
                 } else {
                         hq->in_row++;
-                        nq->in_row = lq->in_row = 0;
                         return yatp_get_task(hq);
                 }
 
         }
 
         if (nq->size) {
-                nq->in_row++;
-                hq->in_row = lq->in_row = 0;
                 return yatp_get_task(nq);
         }
 
         if (lq->size) {
-                lq->in_row++;
-                nq->in_row = hq->in_row = 0;
                 return yatp_get_task(lq);
         }
 
@@ -286,6 +281,8 @@ int yatp_stop (struct yatp_t *tp)
 
                 pthread_mutex_destroy(&tp->q_mutex);
                 pthread_cond_destroy(&tp->q_event);
+
+                free(tp);
         }
 
         return err;
