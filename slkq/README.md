@@ -27,7 +27,7 @@ test1
 ^C
 build# ./slkq_write test_write
 OK
-root@sap1:/mnt_code/code-bits/slkq.export/build# cat /dev/slkq
+build# cat /dev/slkq
 test_write^C
 ```
 
