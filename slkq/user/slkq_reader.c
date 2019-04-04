@@ -1,3 +1,24 @@
+/*
+ * slkq_reader: simple user-space application that handles reading from
+ *             /dev/slkq (SLKQ) device
+ *
+ * Copyright (C) 2019 Alexey Mikhailov
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2, or (at
+ * your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
 #include "../common/slkq.h"
 #include "atomic_io.h"
 #include "log.h"
@@ -14,18 +35,28 @@
 #include <linux/limits.h>
 #include <sys/stat.h>
 
-#define T_WIN (1 * 60)
+/**
+ * slkq_reader is simple application that constantly reads messages
+ * from /dev/slkq device. It stores received information in filesystem.
+ * Output directory is specified by SLKQ_READER_OUTPUT_DIR (common/slkq.h).
+ * There is file rotation happens, it controlled by T_WIN and specified in
+ * seconds (e.g. 5*60 (300) value means that rotation happens every 5
+ * minutes).
+ */
+
+#define T_WIN (5 * 60)
 
 static unsigned int is_daemon = 1;
 static unsigned int stopping = 0;
-static int slkq_fd;
-static int out_fd;
+static int slkq_fd = -1;
+static int out_fd = -1;
 
 static void usage (const char *bin) {
         fprintf(stderr, "Usage: %s [-f]\n", bin);
         exit(EXIT_FAILURE);
 }
 
+/* daemonize() -- perform basic steps of demonization */
 static void daemonize ()
 {
         int i;
@@ -52,6 +83,7 @@ static void daemonize ()
                 close(i);
 }
 
+/* _mkdir(dir) -- recursive creates directory */
 static void _mkdir(const char *dir)
 {
         char tmp[256];
@@ -75,6 +107,11 @@ static void _mkdir(const char *dir)
         mkdir(tmp, S_IRWXU);
 }
 
+/**
+ * open_new_export_file -- opens new export file corresponding to given timestamp
+ *
+ * E.g. 20190403_0300.bin corresponds to 2019/04/03 3:00.
+ */
 static int open_new_export_file (const char *dir, struct tm *t)
 {
         int fd;
@@ -92,6 +129,7 @@ static int open_new_export_file (const char *dir, struct tm *t)
         return fd;
 }
 
+/* lock_file -- basic write lock */
 static int lock_file (int fd)
 {
         struct flock fl;
@@ -104,6 +142,8 @@ static int lock_file (int fd)
         return (fcntl(fd, F_SETLK, &fl));
 }
 
+/* already_running -- check if process already running (SLKQ_READER_LOCK file
+ *                     is used) */
 static int already_running (void)
 {
         int fd;
@@ -129,6 +169,7 @@ static int already_running (void)
 
 static time_t t_start = 0, t_now = 0;
 
+/* handle_input -- handle input on 'slkq' device*/
 static int handle_input (int fd)
 {
         char buf[SLKQ_MSG_MAX_SIZE];
@@ -143,7 +184,11 @@ static int handle_input (int fd)
 
         t_now = time(NULL);
 
-        if (!t_start) {
+        /* Set timestamp on initial run or new time window */
+        if (!t_start || ((t_now - t_start) >= T_WIN)) {
+                if (out_fd)
+                        close(out_fd);
+
                 t_start = t_now - (t_now % T_WIN);
                 out_fd = open_new_export_file(SLKQ_READER_OUTPUT_DIR,
                                               localtime(&t_start));
@@ -154,24 +199,12 @@ static int handle_input (int fd)
                 }
         }
 
-        if ((t_now - t_start) >= T_WIN) {
-                close(out_fd);
-                t_start = t_now - (t_now % T_WIN);
-
-                out_fd = open_new_export_file(SLKQ_READER_OUTPUT_DIR,
-                                              localtime(&t_start));
-                if (out_fd < 0) {
-                        logit(LOG_ERR, "%s: can't open new export file: %m",
-                                __func__);
-                        return -1;
-                }
-        }
-
+        /* Write buffer to file. Spool file uses variable record format where
+         * record's first two byes indicate the length of the record */
         if (atomicio(vwrite, out_fd, (u_int16_t *)&r, 2) != 2) {
                 logit(LOG_ERR, "%s: write: %m", __func__);
                 return -1;
         }
-
         if (atomicio(vwrite, out_fd, buf, r) != r) {
                 logit(LOG_ERR, "%s: write: %m", __func__);
                 return -1;

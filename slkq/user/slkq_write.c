@@ -1,3 +1,24 @@
+/*
+ * slkq_write: simple user-space application that handles writing to
+ *             /dev/slkq (SLKQ) device
+ *
+ * Copyright (C) 2019 Alexey Mikhailov
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2, or (at
+ * your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
 #include "../common/slkq.h"
 
 #include <errno.h>
@@ -8,6 +29,20 @@
 #include <unistd.h>
 
 #include <sys/stat.h>
+
+/**
+ * slkq_write simply sends message (buffer) to /dev/slkq character
+ * device. Message can be defined in several ways:
+ *
+ *  - use file as input ('-f' option, e.g. ./slkq_write -f /tmp/msg1)
+ *  - just specify string as 'msg' argument (e.g. ./slkq_write "test")
+ *  - if none of above is speicified, message gets read from stdin
+ *
+ * '-a' option toggles nonblocking behavior for write operation.
+ * If specified, O_NONBLOCK is going to be set on socket and application
+ * will try to write to socket till it will receive anything but
+ * EAGAIN.
+ */
 
 static unsigned int is_async = 0;
 static int slkq_fd;
@@ -56,8 +91,10 @@ int main (int argc, char **argv)
         }
 
         if (optind >= argc) {
+                /* Using stdin if no message or file specified*/
                 fd = 0;
         } else if ((optind+1 == argc) && !fname) {
+                /* Message specified as string */
                 instr = argv[optind];
         } else {
                 usage(argv[0]);
@@ -65,6 +102,8 @@ int main (int argc, char **argv)
         }
 
         if (fname) {
+                /* Reading from file and specifying message as argument are
+                   mutually exclusive */
                 if (instr) {
                         usage(argv[0]);
                         exit(EXIT_FAILURE);
@@ -79,6 +118,7 @@ int main (int argc, char **argv)
         }
 
         if (fd >= 0 && !instr) {
+                /* Reading from file (or stdin) */
                 p = buf;
                 t = 0;
 
@@ -102,6 +142,7 @@ int main (int argc, char **argv)
 
                 } while (1);
         } else if (instr && fd < 0) {
+                /* Just using input string as message */
                 p = instr;
                 t = strlen(p)+1;
         } else {
@@ -120,7 +161,7 @@ int main (int argc, char **argv)
                         sleep(2);
                         continue;
                 } else {
-                        fprintf(stdout, "ERROR write() returned %ld %s\n",
+                        fprintf(stdout, "ERROR %ld %s\n",
                                 r, (r < 0) ? strerror(errno) : "");
                         break;
                 }
