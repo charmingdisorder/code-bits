@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,10 @@ static char *hostname = NULL;
 static unsigned int port = 80;
 static char *path = NULL;
 static char *method = NULL;
+static char **params = NULL;
+static int num_params = 0;
+static char json_string[4096];
+static size_t json_string_len;
 
 static void *safe_malloc(size_t n, unsigned long line)
 {
@@ -217,11 +222,33 @@ static void parse_url(const char *url)
         }
 }
 
+static void generate_json_string()
+{
+//{"id":0, "jsonrpc":"2.0","method":"systemInfo","params":[]}
+        unsigned int i;
+        sprintf(json_string, "{\"id\":%u, \"jsonrpc\":\"%s\",\"method\":\"%s\",\"params\":[",
+                 client_id, jsonrpc_ver, method);
+
+        for (i = 0; i < num_params; i++) {
+                strcat (json_string, params[i]);
+                if (i < (num_params - 1)) {
+                        strcat(json_string, ",");
+                }
+        }
+
+        strcat(json_string, "]}");
+
+        json_string_len = strlen(json_string);
+
+        fprintf(stderr, "json_string:\n%s\n", json_string);
+        return;
+}
+
 int main (int argc, char **argv)
 {
-        int opt, fd;
+        int opt, fd, i;
         char buf[BUFSIZ];
-        size_t len;
+        ssize_t len;
 
         while ((opt = getopt(argc, argv, "i:j:h")) != -1)
         {
@@ -255,7 +282,18 @@ int main (int argc, char **argv)
         method = strdup(argv[optind]);
         optind++;
 
-        /* params, argc-optind */
+        num_params = argc-optind;
+        params = SAFEMALLOC(sizeof(char *) * num_params);
+
+        i = 0;
+
+        while (optind < argc) {
+                params[i] = argv[optind];
+                i++;
+                optind++;
+        }
+
+        generate_json_string();
 
         fd = socket_connect();
 
@@ -265,7 +303,53 @@ int main (int argc, char **argv)
         len = snprintf(buf, BUFSIZ, "Content-type: application/json\r\n");
         write(fd, buf, len);
 
+        len = snprintf(buf, BUFSIZ, "Content-Length: %ld\r\n\r\n", json_string_len);
+        write(fd, buf, len);
+
+        write(fd, json_string, json_string_len);
+
+        while ((len = read(fd, buf, BUFSIZ)) > 0) {
+                fprintf(stdout, "%s\n", buf);
+        }
+
+        if (len < 0) {
+                fprintf(stderr, "read() failed: %s\n", strerror(errno));
+        }
+
         shutdown(fd, SHUT_RDWR);
         close(fd);
-        return 0;
+        return (len < 0) ? 1 : 0;
 }
+
+/*
+  `--> ./rest_client -i 4 http://postman-echo.com/post systeminfo \"test\" 1.0
+json_string:
+{"id":4, "jsonrpc":"2.0","method":"systeminfo","params":["test",1.0]}
+HTTP/1.1 200 OK
+Date: Sun, 23 Aug 2020 19:19:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 529
+Connection: close
+ETag: W/"211-VvQUfMCq5EjAXsMFCFKTaTEapdA"
+Vary: Accept-Encoding
+set-cookie: sails.sid=s%3AFA-eUFIgZ2UWtXyMl0vLHYAM1CK20pAI.f5tISwf%2F6lBH
+qGuRYLf%2BaaCB%2FYe9AtNzCxm4E4tNVrg; Path=/; HttpOnly
+
+{"args":{},"data":{"id":4,"jsonrpc":"2.0","method":"systeminfo","params":
+["test",1]},"files":{},"form":{},"headers":{"x-forwarded-proto":"http","x
+-forwarded-port":"80","host":"a0207c42-pmecho-pmechoingr-f077-962204340.u
+s-east-1.elb.amazonaws.com","x-amzn-trace-id":"Root=1-5f42c14f-677908691c
+5f89d97081ee45","content-length":"69","content-type":"application/json"},
+"json":{"id":4,"jsonrpc":"2.0","method":"systeminfo","params":["test",1]},"url":"http://a0207c42-pmecho-pmechoingr-f077-962204340.us-east-1.elb.am
+azonaws.com/post"
+}TTP/1.1 200 OK
+Date: Sun, 23 Aug 2020 19:19:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 529
+Connection: close
+ETag: W/"211-VvQUfMCq5EjAXsMFCFKTaTEapdA"
+Vary: Accept-Encoding
+set-cookie: sails.sid=s%3AFA-eUFIgZ2UWtXyMl0vLHYAM1CK20pAI.f5tISwf%2F6lBHqGuRYLf%2BaaCB%2FYe9AtNzCxm4E4tNVrg; Path=/; HttpOnly
+
+{"args":{},"data":{"id":4,"jsonrpc":"2.0","method":"systeminfo","params":["test",1]},"files":{},"form":{},"headers":{"x-forwarded-proto":"http","x-forwarded-port":"80","host":"a0207c42-pmecho-pmechoingr-f077-962204340.us-east-1.elb.amazonaws.com","x-amzn-trace-id":"Root=1-5f42c14f-677908691c5f89d97081ee45","content-length":"69","content-type":"application/json"},"json":{"id":4,"jsonrpc":"2.0","method":"systeminfo","params":["test",1]},"url":"http://a0207c42-pmecho-pmechoingr-f077-962204340.us-east-1.elb.amazonaws.com/post"
+*/
