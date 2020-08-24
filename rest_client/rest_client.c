@@ -27,19 +27,45 @@ static size_t json_string_len;
 
 static void *safe_malloc(size_t n, unsigned long line)
 {
-    void *p = malloc(n);
+        void *p = malloc(n);
 
-    if (!p)
-    {
-            fprintf(stderr, "[%s:%lu] malloc() failed (%lu bytes)\n",
-                    __FILE__, line, (unsigned long)n);
-            exit(EXIT_FAILURE);
-    }
+        if (!p)
+        {
+                fprintf(stderr, "[%s:%lu] malloc() failed (%lu bytes)\n",
+                        __FILE__, line, (unsigned long)n);
+                exit(EXIT_FAILURE);
+        }
 
-    return p;
+        return p;
 }
 
 #define SAFEMALLOC(n) safe_malloc(n, __LINE__)
+
+static void safe_write(int fd, const char *buf, size_t len, unsigned long line)
+{
+        ssize_t ret;
+
+        while (len) {
+                ret = write(fd, buf, len);
+
+                if (ret < 0) {
+                        if (errno == EINTR)
+                                continue;
+
+                        fprintf(stderr, "[%s:%lu] write() failed:%s\n",
+                                __FILE__, line, strerror(errno));
+
+                        exit(EXIT_FAILURE);
+                }
+
+                buf += ret;
+                len -= ret;
+        }
+
+        return;
+}
+
+#define SAFEWRITE(fd, buf, count) safe_write(fd, buf, count, __LINE__)
 
 static void usage(int code) {
         fprintf(stdout,
@@ -298,15 +324,15 @@ int main (int argc, char **argv)
         fd = socket_connect();
 
         len = snprintf(buf, BUFSIZ, "POST %s HTTP/1.0\r\n", path);
-        write(fd, buf, len);
+        SAFEWRITE(fd, buf, len);
 
         len = snprintf(buf, BUFSIZ, "Content-type: application/json\r\n");
-        write(fd, buf, len);
+        SAFEWRITE(fd, buf, len);
 
         len = snprintf(buf, BUFSIZ, "Content-Length: %ld\r\n\r\n", json_string_len);
-        write(fd, buf, len);
+        SAFEWRITE(fd, buf, len);
 
-        write(fd, json_string, json_string_len);
+        SAFEWRITE(fd, json_string, json_string_len);
 
         while ((len = read(fd, buf, BUFSIZ)) > 0) {
                 fprintf(stdout, "%s\n", buf);
@@ -318,5 +344,5 @@ int main (int argc, char **argv)
 
         shutdown(fd, SHUT_RDWR);
         close(fd);
-        return (len < 0) ? 1 : 0;
+        return (len < 0) ? EXIT_FAILURE : EXIT_SUCCESS;
 }
