@@ -7,8 +7,10 @@
  * For a copy, see <https://opensource.org/licenses/MIT>.
  */
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,11 +29,19 @@
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
+
 
 static int debug = 1;
 
-#define dprintf(...) \
+#define BRCTL_FMT_STRING "%-16s%-24s%-16s%-16s\n"
+
+#define BRCTL_FMT_SSTRING "%-16s%-24s%-16s"
+
+#define BRCTL_FMT_STRING_SIZ (16+24+16+IFNAMSIZ)
+
+#define dprintf(...)                                                    \
         do { if (debug) fprintf(stderr, __VA_ARGS__); } while (0)
 
 #define NETLINK_MSG_NEST_START(msg, container, attrtype) \
@@ -65,6 +75,157 @@ do { \
 
 
 static pid_t pid;
+
+/**
+ * is_if_bridge: checks if given link name corresponds to bridge device
+ *
+ * @ifname: name of the link
+ */
+
+static int is_if_bridge (const char *ifname)
+{
+        char buf[1024];
+        struct stat st;
+
+	snprintf(buf, 1024, "/sys/devices/virtual/net/%s/bridge", ifname);
+
+        if (stat(buf, &st) < 0)
+		return -1;
+
+	return 1;
+}
+
+static int read_file_to_string (const char *filename, char *out, int maxbytes)
+{
+        int fd;
+
+        fd = open(filename, O_RDONLY);
+
+        if (fd < 0) {
+                fprintf(stderr, "Can't open '%s': %s\n", filename, strerror(errno));
+                return -1;
+        }
+
+        
+}
+
+static int cmd_show_if (const char *name)
+{
+        /* we're in /sys/class/net */
+        /* BRCTL_FMT_STRING "%-14s%-24s%-16s%s\n" */
+        /* /sys/devices/virtual/net/br0/bridge/bridge_id */
+        /* br0/bridge/bridge_id */
+        /* $ sudo ls -l /sys/class/net/br0/brif
+lrwxrwxrwx 0 root root 26 ноя 22:49 dummy0 -> ../../dummy0/brport
+lrwxrwxrwx 0 root root 26 ноя 23:02 dummy1 -> ../../dummy1/brport */
+        /* $ sudo cat /sys/class/net/br0/bridge/stp_state 
+           0
+        */
+        char pathbuf[PATH_MAX];
+        char bridge_id[25];
+        char stp_str[2];
+        char *ptr;
+        int fd;
+        int nread;
+        int stp = 0;
+        int need_newline = 1;
+        struct dirent *dentry;
+        DIR *dir;
+        
+
+        snprintf(pathbuf, PATH_MAX, "%s/bridge/bridge_id", name);
+        fd = open(pathbuf, O_RDONLY);
+
+        if (fd < 0)
+                return -1;
+
+        nread = read(fd, bridge_id, 25);
+
+        close(fd);
+
+        if (nread <= 0)
+                return -1;
+        
+        bridge_id[nread-1] = '\0';
+
+        snprintf(pathbuf, PATH_MAX, "%s/bridge/stp_state", name);
+        fd = open(pathbuf, O_RDONLY);
+
+        if (fd < 0)
+                return -1;
+
+        nread = read(fd, stp_str, 2);
+        
+        close(fd);
+
+        if (strcmp(stp_str, "1") == 0)
+                stp = 1;
+        
+        fprintf(stdout, BRCTL_FMT_SSTRING, name, bridge_id, stp ? "yes" : "no" );
+
+        snprintf(pathbuf, PATH_MAX, "/sys/class/net/%s/brif",name);
+        
+        dir = opendir(pathbuf);
+
+        if (dir) {
+                while ((dentry = readdir(dir)) != NULL) {
+
+                        if ((strcmp(dentry->d_name, ".") == 0) ||
+                            (strcmp(dentry->d_name, "..") == 0))
+                                continue;
+                        
+                        if (need_newline) {
+                                fprintf(stdout, "%s\n", dentry->d_name);
+                                need_newline = 0;
+                        } else {
+                                // 16+24+16+16 = 72
+                                fprintf(stdout, "%*c", 57);
+                                fprintf(stdout, "%s\n", dentry->d_name);
+                        }
+                }
+        }
+
+        fprintf(stdout, "\n");
+        return 0;
+        
+}
+
+static int cmd_show ()
+{
+/* Output:
+ *bridge name   bridge id               STP enabled     interfaces
+ *br0           8000.000000000000       no              eth0
+ */
+        struct if_nameindex *idx, *indexes;
+        char brname[IFNAMSIZ];
+        int bridx[1024];
+        int need_newline = 1;
+
+        if (chdir("/sys/class/net") < 0) {
+                fprintf(stderr, "chdir() failed: %s\n", strerror(errno));
+                return -1;
+        }
+        
+        indexes = if_nameindex();
+
+        if (!indexes) {
+                fprintf(stderr, "if_nameindex() failed: %s\n", strerror(errno));
+                return -1;
+        }
+        /*fprintf(stdout, "bridge name\tbridge id\t\tSTP enabled\tinterfaces");*/
+        fprintf(stdout, BRCTL_FMT_STRING, "bridge name", "bridge id",
+                "STP enabled", "interfaces");
+
+        for (idx = indexes; idx->if_index; idx++) {
+                if (is_if_bridge(idx->if_name) > 0) {
+                        cmd_show_if(idx->if_name);
+                        need_newline = 0;
+                }
+        }
+
+        return 0;
+
+}
 
 /**
  * create_netlink_socket: creates Netlink socket and establishes
@@ -463,6 +624,10 @@ int main (int argc, char **argv)
 
         pid = getpid();
 
+        cmd_show();
+
+        return 0;
+        
         if (cmd_delbr("br0", &err) < 0) {
                 fprintf(stderr, "cmd_delbr() failed, errcode = %x\n", err);
                 return -1;
