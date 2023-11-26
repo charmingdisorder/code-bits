@@ -7,6 +7,8 @@
  * For a copy, see <https://opensource.org/licenses/MIT>.
  */
 
+#include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -15,11 +17,15 @@
 #include <unistd.h>
 
 #include <linux/netlink.h>
+#include <linux/sockios.h>
+
+#include <net/if.h>
 
 #include <netlink/msg.h>
 #include <netlink/netlink.h>
 #include <netlink/socket.h>
 
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -34,7 +40,7 @@ do { \
         if (!container) { \
                 fprintf(stderr, "Allocated Netlink buffer is too small"); \
                 return -1; \
-        } \                
+        } \
 } while (0)
 
 #define NETLINK_MSG_NEST_END(msg, container) \
@@ -182,16 +188,15 @@ static int execute_netlink_cmd (struct nl_msg *nl_msg, struct nlmsghdr **resp,
 {
         struct nlmsghdr *tmp_resp = NULL;
         struct nl_sock *sock = NULL;
+        struct pollfd fds[1];
         int len = 0;
-
         struct sockaddr_nl nladdr = {
                 .nl_family = AF_NETLINK,
                 .nl_pid    = pid,
                 .nl_groups = 0,
         };
 
-        struct pollfd fds[1];
-
+        
         bzero(fds, sizeof(fds));
 
         if (!(sock = send_netlink_req(nl_msg, nladdr)))
@@ -204,12 +209,20 @@ static int execute_netlink_cmd (struct nl_msg *nl_msg, struct nlmsghdr **resp,
                 return -1;
         }
 
+#if 0
+        fprintf(stderr, "nl_recv(len) = %d\n", len);
+        fprintf(stderr, "nlmsg_datalen = %d\n", nlmsg_datalen(tmp_resp));
+
+        nl_msg_dump(nl_msg, stdout);
+#endif
+        
         *resp = tmp_resp;
         *resp_buflen = len;
-        
+       
         return 0;
 }
 
+#if 0
 /**
  * netlink_talk: wrapper arround execute_netlink_cmd()
  */
@@ -248,6 +261,7 @@ err:
         fprintf(stderr, "Malformed Netlink response message\n");
         return -1;
 }
+#endif
 
 /**
  * cmd_addbr: creates bridge with given name
@@ -264,8 +278,6 @@ static int cmd_addbr (const char *ifname, int *error)
         
         struct nlmsgerr *err;
         struct nlattr *linkinfo;
-        struct nlattr *infodata;
-        size_t buflen;
         struct ifinfomsg ifinfo;
         struct nl_msg *msg;
         struct nlmsghdr *resp;
@@ -296,18 +308,20 @@ static int cmd_addbr (const char *ifname, int *error)
         NETLINK_MSG_PUT(msg, IFLA_INFO_KIND, 7, "bridge");
         NETLINK_MSG_NEST_END(msg, linkinfo);
 
+#if 0
         if (!netlink_talk(ifname, msg, &resp, &resp_len, error))
                 return -1;
-
+#endif
+        if (execute_netlink_cmd(msg, &resp, &resp_len) < 0)
+                return -1;
+        
         switch (resp->nlmsg_type) {
         case NLMSG_ERROR:
                 err = (struct nlmsgerr *)NLMSG_DATA(resp);
 
-                if (resp->nlmsg_len < NLMSG_LENGTH(sizeof(*err))) {
-                        fprintf(stderr, "Malformed Netlink response message\n");
-                        return -1;
-                }
-
+                if (resp->nlmsg_len < NLMSG_LENGTH(sizeof(*err)))
+                        goto malformed_resp;
+                        
                 if (err->error < 0) {
                         *error = err->error;
                         return -1;
@@ -319,23 +333,150 @@ static int cmd_addbr (const char *ifname, int *error)
                 break;
 
         default:
-                fprintf(stderr, "Malformed Netlink response message\n");
+                goto malformed_resp;
+        }
+
+
+        return 0;
+
+malformed_resp:
+        fprintf(stderr, "Malformed Netlink response message\n");
+        return -1;
+}
+
+/**
+ * cmd_delbr_ioctl: deletes bridge with given name using ioctl(SIOCIFDESTROY)
+ *
+ * @ifname: name of the link
+ *
+ * Return 0 on success, -1 on error
+ */
+
+static int cmd_delbr_ioctl(const char *ifname)
+{
+        struct ifreq ifr;
+        int sock = -1;
+
+        sock = socket(AF_LOCAL, SOCK_DGRAM, 0);
+
+        if (sock < 0) {
+                fprintf(stderr, "socket() failed: %s\n", strerror(errno));
                 return -1;
         }
+        
+        fcntl(sock, F_SETFD, fcntl(sock, F_GETFD) | FD_CLOEXEC);
+
+        if (ioctl(sock, SIOCBRDELBR, ifname) < 0) {
+                fprintf(stderr, "cmd_delbr_ioctl(%s) ioctl() failed: %s\n",
+                        ifname, strerror(errno));
+                return -1;
+        }
+
+        close(sock);
 
         return 0;
 }
 
+/**
+ * cmd_delbr: deletes bridge with given name
+ *
+ * @ifname: name of the link
+ * @error: Netlink error code in case of failure
+ *
+ * Return 0 on success, -1 on error (@error will be used to store error code)
+ *
+ */
+
+static int cmd_delbr(const char *ifname, int *error)
+{
+        struct nlmsgerr *err;
+        struct ifinfomsg ifinfo = { .ifi_family = AF_UNSPEC };
+        unsigned int recvbuflen = 0;
+        struct nl_msg *nl_msg = NULL;
+        struct nlmsghdr *resp = NULL;
+
+        *error = 0;
+
+        dprintf("Deleting interface '%s'\n", ifname);
+
+        nl_msg = nlmsg_alloc_simple(RTM_DELLINK,
+                                    NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL);
+
+        if (!nl_msg)
+                goto buffer_oom;
+
+        if (nlmsg_append(nl_msg, &ifinfo, sizeof(ifinfo), NLMSG_ALIGNTO) < 0)
+                goto buffer_oom;
+
+        if (nla_put(nl_msg, IFLA_IFNAME, strlen(ifname)+1, ifname) < 0)
+                goto buffer_oom;
+
+        if (execute_netlink_cmd(nl_msg, &resp, &recvbuflen) < 0)
+                return -1;
+        
+        if (recvbuflen < NLMSG_LENGTH(0) || resp == NULL)
+                goto malformed_resp;
+
+        switch (resp->nlmsg_type) {
+        case NLMSG_ERROR:
+                //fprintf(stderr, "err = %d, nlmsg_len = %d\n", err->error, resp->nlmsg_len);
+                err = (struct nlmsgerr *)NLMSG_DATA(resp);
+
+                if (resp->nlmsg_len < NLMSG_LENGTH(sizeof(*err)))
+                        goto malformed_resp;
+
+                if (-err->error == EOPNOTSUPP) {
+                        /* XXX: was getting EOPNOTSUPP here, going to use ioctl(),
+                                should investigate later*/
+                        return cmd_delbr_ioctl(ifname);
+                }
+                
+                if (err->error < 0) {
+                        fprintf(stderr, "Error deleting network device (errcode = %d)\n", -err->error);
+                        *error = err->error;
+                        return -1;
+                }
+
+                break;
+
+        case NLMSG_DONE:
+                break;
+
+        default:
+                goto malformed_resp;
+        }
+
+        return 0;
+        
+malformed_resp:
+        fprintf(stderr, "Malformed Netlink response message\n");
+        return -1;
+        
+buffer_oom:
+        fprintf(stderr, "Netlink buffer is too small\n");
+        return -1;
+}
+
 int main (int argc, char **argv)
 {
-        int err;
+        int err = 0;
 
         pid = getpid();
 
-        cmd_addbr("br0", &err);
-        
-        return 0;
+        if (cmd_delbr("br0", &err) < 0) {
+                fprintf(stderr, "cmd_delbr() failed, errcode = %x\n", err);
+                return -1;
+        }
 
-        err:
-        exit(EXIT_FAILURE);
+        if (cmd_addbr("br0", &err) < 0) {
+                fprintf(stderr, "cmd_addbr() failed, errcode = %d\n", err);
+                return -1;
+        }
+
+        if (cmd_delbr("br0", &err) < 0) {
+                fprintf(stderr, "cmd_delbr() failed, errcode = %d\n", err);
+                return -1;
+        }
+
+        return 0;
 }
