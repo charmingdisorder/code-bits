@@ -611,6 +611,11 @@ static int cmd_addif (const char *brname, const char *ifname, int *code)
                 goto err2;
         }
 
+        if (rtnl_link_get_master(ltap) != 0) {
+                fprintf(stderr, "Interface '%s'is already enslaved\n", ifname);
+                goto err3;
+        }
+
         /* XXX: should we check and signal error if "ltap" is already enslaved
            by "link"? */
         if (rtnl_link_enslave(handle, link, ltap) < 0) {
@@ -660,6 +665,11 @@ static int cmd_delif (const char *brname, const char *ifname, int *code)
         if (!ltap) {
                 fprintf(stderr, "Unable to find the interface '%s'\n", ifname);
                 goto err1;
+        }
+
+        if (rtnl_link_get_master(ltap) == 0) {
+                fprintf(stderr, "Interface '%s' is not enslaved\n", ifname);
+                goto err2;
         }
 
         if (rtnl_link_release(handle, ltap) < 0) {
