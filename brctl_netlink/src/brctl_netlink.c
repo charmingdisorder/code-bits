@@ -32,48 +32,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include "brctl_netlink.h"
 
 static int debug = 1;
-
-#define BRCTL_FMT_STRING "%-16s%-24s%-16s%-16s\n"
-
-#define BRCTL_FMT_SSTRING "%-16s%-24s%-16s"
-
-#define BRCTL_FMT_STRING_SIZ (16+24+16+IFNAMSIZ)
-
-#define dprintf(...)                                                    \
-        do { if (debug) fprintf(stderr, __VA_ARGS__); } while (0)
-
-#define NETLINK_MSG_NEST_START(msg, container, attrtype) \
-do { \
-        container = nla_nest_start(msg, attrtype); \
-        if (!container) { \
-                fprintf(stderr, "Allocated Netlink buffer is too small"); \
-                return -1; \
-        } \
-} while (0)
-
-#define NETLINK_MSG_NEST_END(msg, container) \
-        do { nla_nest_end(msg, container); } while (0)
-
-#define NETLINK_MSG_PUT(msg, attrtype, datalen, data) \
-do { \
-        const void *dataptr = data;                                \
-        if (dataptr && nla_put(msg, attrtype, datalen, dataptr) < 0) {  \
-                fprintf(stderr, "Allocated Netlink buffer is too small"); \
-                return -1; \
-        } \
-} while (0)
-
-#define NETLINK_MSG_APPEND(msg, datalen, dataptr) \
-do { \
-        if (nlmsg_append(msg, dataptr, datalen, NLMSG_ALIGNTO) < 0) {   \
-                fprintf(stderr, "Allocated Netlink buffer is too small"); \
-                return -1; \
-        } \
-} while (0)
-
-
 static pid_t pid;
 
 /**
@@ -93,20 +54,6 @@ static int is_if_bridge (const char *ifname)
 		return -1;
 
 	return 1;
-}
-
-static int read_file_to_string (const char *filename, char *out, int maxbytes)
-{
-        int fd;
-
-        fd = open(filename, O_RDONLY);
-
-        if (fd < 0) {
-                fprintf(stderr, "Can't open '%s': %s\n", filename, strerror(errno));
-                return -1;
-        }
-
-        
 }
 
 static int cmd_show_if (const char *name)
@@ -538,6 +485,20 @@ static int cmd_delbr_ioctl(const char *ifname)
         return 0;
 }
 
+static void usage (int ret)
+{
+        fprintf(stdout,
+                "Usage: brctl_netlink [commands]\n\n"
+                "Commands:\n"
+                "addbr  <bridge>               add bridge\n"
+                "delbr  <bridge>               delete bridge\n"
+                "addif  <bridge> <device>      add interface to bridge\n"
+                "delif  <bridge> <device>      delete interface from bridge\n"
+                "show                          show a list of bridges\n");
+
+        exit(ret);
+}
+
 /**
  * cmd_delbr: deletes bridge with given name
  *
@@ -618,21 +579,115 @@ buffer_oom:
         return -1;
 }
 
+static int cmd_addif (const char *brname, const char *ifname, int *code)
+{
+
+}
+
+static int cmd_delif (const char *brname, const char *ifname, int *code)
+{
+
+}
+
 int main (int argc, char **argv)
 {
         int err = 0;
 
+        if (argc == 1) {
+                usage(EXIT_SUCCESS);
+        }
+        
         pid = getpid();
 
-        cmd_show();
+        if (strcmp(argv[1], "addbr") == 0) {
+                if (argc != 3) {
+                        usage(EXIT_FAILURE);
+                }
+
+                if (cmd_addbr(argv[2], &err) < 0) {
+                        fprintf(stderr, "Failed to add bridge\n");
+
+                        if (err != 0 || errno != 0) {
+                                fprintf(stderr, "code: %d, errno: %s\n", err, strerror(errno));
+                        }
+
+                        exit(EXIT_FAILURE);
+                }
+
+                exit(EXIT_SUCCESS);
+        }
+
+        if (strcmp(argv[1], "delbr") == 0) {
+                if (argc != 3) {
+                        usage(EXIT_FAILURE);
+                }
+
+                if (cmd_delbr(argv[2], &err) < 0) {
+                        fprintf(stderr, "Failed to delete bridge\n");
+
+                        if (err != 0 || errno != 0) {
+                                fprintf(stderr, "code: %d, errno: %s\n", err, strerror(errno));
+                        }
+
+                        exit(EXIT_FAILURE);
+                }
+
+                exit(EXIT_SUCCESS);
+        }
+
+        if (strcmp(argv[1], "show") == 0) {
+                if (argc != 2) {
+                        usage(EXIT_FAILURE);
+                }
+
+                return cmd_show();
+        }
+
+        if (strcmp(argv[1], "addif") == 0) {
+                if (argc != 4) {
+                        usage(EXIT_FAILURE);
+                }
+                
+                if (cmd_addif(argv[2], argv[3], &err) < 0) {
+                        fprintf(stderr, "Failed to add interface\n");
+
+                        if (err != 0 || errno != 0) {
+                                fprintf(stderr, "code: %d, errno: %s\n", err, strerror(errno));
+                        }
+
+                        exit(EXIT_FAILURE);
+                }
+
+                exit(EXIT_SUCCESS);
+        }
+
+        if (strcmp(argv[1], "delif") == 0) {
+                if (argc != 4) {
+                        usage(EXIT_FAILURE);
+                }
+
+                if (cmd_delif(argv[2], argv[3], &err) < 0) {
+                        fprintf(stderr, "Failed to delete interface\n");
+
+                        if (err != 0 || errno != 0) {
+                                fprintf(stderr, "code: %d, errno: %s\n", err, strerror(errno));
+                        }
+
+                        exit(EXIT_FAILURE);
+                }
+
+                exit(EXIT_SUCCESS);
+        }
+
+        usage(EXIT_FAILURE);
 
         return 0;
-        
+#if 0        
         if (cmd_delbr("br0", &err) < 0) {
                 fprintf(stderr, "cmd_delbr() failed, errcode = %x\n", err);
                 return -1;
         }
-
+        
         if (cmd_addbr("br0", &err) < 0) {
                 fprintf(stderr, "cmd_addbr() failed, errcode = %d\n", err);
                 return -1;
@@ -644,4 +699,5 @@ int main (int argc, char **argv)
         }
 
         return 0;
+#endif
 }
