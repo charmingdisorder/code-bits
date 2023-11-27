@@ -145,10 +145,6 @@ static int cmd_show ()
  *br0           8000.000000000000       no              eth0
  */
         struct if_nameindex *idx, *indexes;
-        char brname[IFNAMSIZ];
-        int bridx[1024];
-        int need_newline = 1;
-
         if (chdir("/sys/class/net") < 0) {
                 fprintf(stderr, "chdir() failed: %s\n", strerror(errno));
                 return -1;
@@ -167,7 +163,6 @@ static int cmd_show ()
         for (idx = indexes; idx->if_index; idx++) {
                 if (is_if_bridge(idx->if_name) > 0) {
                         cmd_show_if(idx->if_name);
-                        need_newline = 0;
                 }
         }
 
@@ -585,25 +580,21 @@ static int cmd_addif (const char *brname, const char *ifname, int *code)
         struct rtnl_link *link = NULL, *ltap = NULL;
         struct nl_sock *handle = NULL;
         struct nl_cache *cache = NULL;
-        int err = -1;
-        int if_idx = 0;
+        int ret = -1;
 
         handle = nl_socket_alloc();
-        if (!handle) {
+        if (handle == NULL) {
                 fprintf(stderr, "Failed to open Netlink socket\n");
                 exit(EXIT_FAILURE);
         }
-
         
-        err = nl_connect(handle, NETLINK_ROUTE);
-        if (err < 0) {
+        if (nl_connect(handle, NETLINK_ROUTE) < 0) {
                 fprintf(stderr, "connect() failed on Netlink socket\n");
                 goto err;
         }
         
 
-        err = rtnl_link_alloc_cache(handle, AF_UNSPEC, &cache);
-        if (err < 0) {
+        if (rtnl_link_alloc_cache(handle, AF_UNSPEC, &cache) < 0) {
                 fprintf(stderr, "Failed to allocate cache\n");
                 goto err;
         }
@@ -628,7 +619,7 @@ static int cmd_addif (const char *brname, const char *ifname, int *code)
                 goto err3;
         }
 
-        err = 0;
+        ret = 0;
 
 err3:        
         rtnl_link_put(ltap);
@@ -639,15 +630,53 @@ err1:
 err:
         nl_socket_free(handle);
 
-        return err;
+        return ret;
 }
 
 static int cmd_delif (const char *brname, const char *ifname, int *code)
 {
-        struct nl_sock *nlsock;
+        struct nl_sock *handle = NULL;
+        struct nl_cache *cache = NULL;
+        struct rtnl_link *ltap;
+        int ret = -1;
 
-        nlsock = create_netlink_socket();
+        handle = nl_socket_alloc();
+        if (handle == NULL) {
+                fprintf(stderr, "Failed to open Netlink socket\n");
+                exit(EXIT_FAILURE);
+        }
 
+        if (nl_connect(handle, NETLINK_ROUTE) < 0) {
+                fprintf(stderr, "connect() failed on Netlink socket\n");
+                goto err;
+        }
+
+        if (rtnl_link_alloc_cache(handle, AF_UNSPEC, &cache) < 0) {
+                fprintf(stderr, "Failed to allocate cache\n");
+                goto err;
+        }
+
+        ltap = rtnl_link_get_by_name(cache, ifname);
+        if (!ltap) {
+                fprintf(stderr, "Unable to find the interface '%s'\n", ifname);
+                goto err1;
+        }
+
+        if (rtnl_link_release(handle, ltap) < 0) {
+                fprintf(stderr, "Unable to release interface '%s' from bridge '%s'\n",
+                        ifname, brname);
+                goto err2;
+        }
+
+        ret = 0;
+err2:
+        rtnl_link_put(ltap);
+err1:
+        nl_cache_free(cache);
+err:
+        nl_socket_free(handle);
+
+        return ret;
 }
 
 int main (int argc, char **argv)
