@@ -19,19 +19,20 @@
 #include <unistd.h>
 
 #include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <linux/sockios.h>
 
 #include <net/if.h>
 
 #include <netlink/msg.h>
 #include <netlink/netlink.h>
+#include <netlink/route/link.h>
 #include <netlink/socket.h>
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
 #include "brctl_netlink.h"
 
 static int debug = 1;
@@ -581,11 +582,71 @@ buffer_oom:
 
 static int cmd_addif (const char *brname, const char *ifname, int *code)
 {
+        struct rtnl_link *link = NULL, *ltap = NULL;
+        struct nl_sock *handle = NULL;
+        struct nl_cache *cache = NULL;
+        int err = -1;
+        int if_idx = 0;
 
+        handle = nl_socket_alloc();
+        if (!handle) {
+                fprintf(stderr, "Failed to open Netlink socket\n");
+                exit(EXIT_FAILURE);
+        }
+
+        
+        err = nl_connect(handle, NETLINK_ROUTE);
+        if (err < 0) {
+                fprintf(stderr, "connect() failed on Netlink socket\n");
+                goto err;
+        }
+        
+
+        err = rtnl_link_alloc_cache(handle, AF_UNSPEC, &cache);
+        if (err < 0) {
+                fprintf(stderr, "Failed to allocate cache\n");
+                goto err;
+        }
+
+        link = rtnl_link_get_by_name(cache, brname);
+        if (!link) {
+                fprintf(stderr, "Unable to find the bridge '%s'\n", brname);
+                goto err1;
+        }
+
+        ltap = rtnl_link_get_by_name(cache, ifname);
+        if (!ltap) {
+                fprintf(stderr, "Unable to find the interface '%s'\n", ifname);
+                goto err2;
+        }
+
+        /* XXX: should we check and signal error if "ltap" is already enslaved
+           by "link"? */
+        if (rtnl_link_enslave(handle, link, ltap) < 0) {
+                fprintf(stderr, "Unable to enslave interface '%s' to bridge '%s'\n",
+                        ifname, brname);
+                goto err3;
+        }
+
+        err = 0;
+
+err3:        
+        rtnl_link_put(ltap);
+err2:
+        rtnl_link_put(link);
+err1:
+        nl_cache_free(cache);
+err:
+        nl_socket_free(handle);
+
+        return err;
 }
 
 static int cmd_delif (const char *brname, const char *ifname, int *code)
 {
+        struct nl_sock *nlsock;
+
+        nlsock = create_netlink_socket();
 
 }
 
