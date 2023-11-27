@@ -575,6 +575,16 @@ buffer_oom:
         return -1;
 }
 
+/**
+ * cmd_add: add interface to bridge
+ *
+ * @brname: name of the bridge interface
+ * @ifname: name of the interface to add
+ @ @code: error code in case of failure
+ *
+ * Returns 0 on success, -1 on failure
+ */
+
 static int cmd_addif (const char *brname, const char *ifname, int *code)
 {
         struct rtnl_link *link = NULL, *ltap = NULL;
@@ -585,7 +595,7 @@ static int cmd_addif (const char *brname, const char *ifname, int *code)
         handle = nl_socket_alloc();
         if (handle == NULL) {
                 fprintf(stderr, "Failed to open Netlink socket\n");
-                exit(EXIT_FAILURE);
+                return ret;
         }
         
         if (nl_connect(handle, NETLINK_ROUTE) < 0) {
@@ -637,6 +647,16 @@ err:
 
         return ret;
 }
+
+/**
+ * cmd_add: delete interface from bridge
+ *
+ * @brname: name of the bridge interface
+ * @ifname: name of the interface to delete
+ @ @code: error code in case of failure
+ *
+ * Returns 0 on success, -1 on failure
+ */
 
 static int cmd_delif (const char *brname, const char *ifname, int *code)
 {
@@ -782,22 +802,4 @@ int main (int argc, char **argv)
         usage(EXIT_FAILURE);
 
         return 0;
-#if 0        
-        if (cmd_delbr("br0", &err) < 0) {
-                fprintf(stderr, "cmd_delbr() failed, errcode = %x\n", err);
-                return -1;
-        }
-        
-        if (cmd_addbr("br0", &err) < 0) {
-                fprintf(stderr, "cmd_addbr() failed, errcode = %d\n", err);
-                return -1;
-        }
-
-        if (cmd_delbr("br0", &err) < 0) {
-                fprintf(stderr, "cmd_delbr() failed, errcode = %d\n", err);
-                return -1;
-        }
-
-        return 0;
-#endif
 }
